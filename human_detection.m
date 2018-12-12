@@ -1,9 +1,41 @@
 close all;
-gScale_image = get_grayscale_image('./Human/Train_Positive/crop001030c.bmp');
-gScale_image = double(gScale_image);
-[Gm, Ga] = apply_prewitt_operator(gScale_image);
-[cell_HOG] = get_cell_HOG(Gm, Ga);
-[HOG_vector] = concat_cell_HOGs(cell_HOG);
+[data] = collect_training_data();
+[training_data] = extract_features(data);
+
+function [data] = extract_features(data)
+    for image_count = 1:length(data)
+        data(image_count).feature_vector = extract_HOG_features(data(image_count).image);
+    end
+end
+
+function [HOG_vector] = extract_HOG_features(image)
+    [Gm, Ga] = apply_prewitt_operator(image);
+    [cell_HOG] = get_cell_HOG(Gm, Ga);
+    [HOG_vector] = concat_cell_HOGs(cell_HOG);
+end
+% function collects data from a folder named Human at the rot of the project %
+function [training_data] = collect_training_data()
+    folder = 'Human/Train_Positive';
+    files = dir(fullfile(folder,'*.bmp'));
+    positive_training_data = struct([]);
+    for file_count = 1:length(files)
+        file = files(file_count,1);
+        image = imread(fullfile(file.folder, file.name));
+        positive_training_data(file_count).image = get_grayscale_image(image);
+        positive_training_data(file_count).label = 1;  
+    end
+    
+    folder = 'Human/Train_Negative';
+    files = dir(fullfile(folder,'*.bmp'));
+    negative_training_data = struct([]);
+    for file_count = 1:length(files)
+        file = files(file_count,1);
+        image = imread(fullfile(file.folder, file.name));
+        negative_training_data(file_count).image = get_grayscale_image(image);
+        negative_training_data(file_count).label = 0;  
+    end
+    training_data = [positive_training_data negative_training_data];
+end
 
 % cuntion to concat cell-HOG into block HOG %
 function [HOG_vector] = concat_cell_HOGs(cell_HOG)
@@ -34,14 +66,13 @@ function [normalized_block_HOG_vector] = normalize_block_HOG(block_HOG)
     normalized_block_HOG_vector = normalized_block_HOG_vector ./L2_norm;
 end
 % read the input image and convert it to grayscale %
-function [gScale_image] = get_grayscale_image(image_path)
-    original_image = imread(image_path);
+function [gScale_image] = get_grayscale_image(color_image)
     % get R,G,B component of the image %
-    R = original_image(:,:,1);
-    G = original_image(:,:,2);
-    B = original_image(:,:,3);
+    R = color_image(:,:,1);
+    G = color_image(:,:,2);
+    B = color_image(:,:,3);
     % conversion and rounding off to produce grayscle image %
-    gScale_image = round((0.299 .* R + 0.587 .* G + 0.114 .* B)); 
+    gScale_image = double(round((0.299 .* R + 0.587 .* G + 0.114 .* B))); 
 end
 
 function [HOG] = get_cell_HOG(Gm, Ga)
