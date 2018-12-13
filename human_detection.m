@@ -1,11 +1,110 @@
 close all;
-[data] = collect_training_data();
-[training_data] = extract_features(data);
+TRAIN_POSITIVE_FOLDER = 'Train_Positive';
+TRAIN_NEGATIVE_FOLDER = 'Train_Negative';
+TEST_POSITIVE_FOLDER = 'Test_Positive';
+TEST_NEGATIVE_FOLDER = 'Test_Neg';
+BASE_FOLDER = 'Human';
 
-function [data] = extract_features(data)
+[positive_training_data] = collect_data([BASE_FOLDER filesep TRAIN_POSITIVE_FOLDER],1);
+[negative_training_data] = collect_data([BASE_FOLDER filesep TRAIN_NEGATIVE_FOLDER],0);
+training_data = [positive_training_data negative_training_data];
+[training_data, feature_vector_length] = extract_features(training_data);
+[network] = construct_mlp(feature_vector_length, 1000);
+[network] = train_mlp(network, training_data);
+
+[positive_testing_data] = collect_data([BASE_FOLDER filesep TEST_POSITIVE_FOLDER],1);
+[negative_testing_data] = collect_data([BASE_FOLDER filesep TEST_NEGATIVE_FOLDER],0);
+testing_data = [positive_testing_data negative_testing_data];
+[testing_data, feature_vector_length] = extract_features(testing_data);
+prdict_mlp(network, testing_data);
+
+function prdict_mlp(network, testing_data)
+    hidden_layer = network.hidden_layer;
+    output_layer = network.output_layer;
+    for iteration = 1: length(testing_data)
+        testing_sample = testing_data(iteration);
+        feature_vector = testing_sample.feature_vector;
+        y1 = feature_vector * hidden_layer.w + hidden_layer.b;
+        a1 = arrayfun(@(x) ReLU(x), y1);
+        y2 = a1 * output_layer.w + output_layer.b;
+        a2 = arrayfun(@(x) sigmoid(x), y2);
+        disp(['should be ',num2str(testing_sample.label)]);
+        disp(['prediction',num2str(a2)]);
+    end
+end
+
+function [network] = construct_mlp(feature_vector_length, hidden_layer_size)
+   network = struct;
+   
+   hidden_layer = struct;
+   hidden_layer.w = rand(feature_vector_length,hidden_layer_size) .* 0.01;
+   hidden_layer.b = rand(1, hidden_layer_size).* 0.01;
+   network.hidden_layer = hidden_layer;
+   
+   output_layer = struct;
+   output_layer.w = rand(hidden_layer_size,1).* 0.01;
+   output_layer.b = rand(1, 1).* 0.01;
+   network.output_layer = output_layer;
+end
+
+function [network] = train_mlp(network, training_data)
+   hidden_layer = network.hidden_layer;
+   output_layer = network.output_layer;
+%    epoch_order = randperm(20);
+   for epochs = 1:200
+       errors = zeros(1,length(training_data));
+       for iteration = 1: length(training_data)
+        training_sample = training_data(iteration);
+        feature_vector = training_sample.feature_vector;
+        y1 = feature_vector * hidden_layer.w + hidden_layer.b;
+        a1 = arrayfun(@(x) ReLU(x), y1);
+        y2 = a1 * output_layer.w + output_layer.b;
+        a2 = arrayfun(@(x) sigmoid(x), y2);
+
+        errors(1, iteration) = (training_sample.label - a2)^2;
+        gradient =  2 * (a2 - training_sample.label);
+        gradient = arrayfun(@(x) delta_sigmoid(x), a2) .* gradient; 
+        graidents_prev_layer = output_layer.w .* gradient;
+        output_layer.w = output_layer.w - 0.01 .* a1' .*gradient;
+        output_layer.b = output_layer.b - 0.01 .* gradient;
+        graidents_prev_layer = arrayfun(@(x) delta_ReLU(x), y1').* graidents_prev_layer;
+        hidden_layer.w = hidden_layer.w - 0.01 .* feature_vector' .* graidents_prev_layer';
+        hidden_layer.b = hidden_layer.b - 0.01 .* graidents_prev_layer';  
+       end
+       disp(epochs)
+       mean_error = sum(errors, 'all')/length(errors)
+   end
+end
+
+function [a] = ReLU(x)
+    if (x<=0)
+        a = 0;
+    else
+        a = x;
+    end
+end
+
+function [delta] = delta_ReLU(x)
+    if (x<=0)
+        delta = 0;
+    else
+        delta = 1;
+    end
+end
+
+function [a] = sigmoid(x)
+    a = 1/(1 + exp(-x));
+end
+
+function [delta] = delta_sigmoid(x)
+    delta = x * (1-x);
+end
+
+function [data, feature_vector_length] = extract_features(data)
     for image_count = 1:length(data)
         data(image_count).feature_vector = extract_HOG_features(data(image_count).image);
     end
+    feature_vector_length = length(data(1).feature_vector);
 end
 
 function [HOG_vector] = extract_HOG_features(image)
@@ -14,27 +113,16 @@ function [HOG_vector] = extract_HOG_features(image)
     [HOG_vector] = concat_cell_HOGs(cell_HOG);
 end
 % function collects data from a folder named Human at the rot of the project %
-function [training_data] = collect_training_data()
-    folder = 'Human/Train_Positive';
+function [data] = collect_data(folder, label)
     files = dir(fullfile(folder,'*.bmp'));
-    positive_training_data = struct([]);
+    data = struct([]);
     for file_count = 1:length(files)
         file = files(file_count,1);
         image = imread(fullfile(file.folder, file.name));
-        positive_training_data(file_count).image = get_grayscale_image(image);
-        positive_training_data(file_count).label = 1;  
+        data(file_count).image = get_grayscale_image(image);
+        data(file_count).label = label;  
+        data(file_count).fileName = file.name;
     end
-    
-    folder = 'Human/Train_Negative';
-    files = dir(fullfile(folder,'*.bmp'));
-    negative_training_data = struct([]);
-    for file_count = 1:length(files)
-        file = files(file_count,1);
-        image = imread(fullfile(file.folder, file.name));
-        negative_training_data(file_count).image = get_grayscale_image(image);
-        negative_training_data(file_count).label = 0;  
-    end
-    training_data = [positive_training_data negative_training_data];
 end
 
 % cuntion to concat cell-HOG into block HOG %
@@ -43,8 +131,8 @@ function [HOG_vector] = concat_cell_HOGs(cell_HOG)
     block_column_size = 2;
     HOG_vector = zeros(1, (size(cell_HOG,1)-1) * (size(cell_HOG,2)-1) * (block_row_size*block_column_size*size(cell_HOG,3)));
     index = 1;
-    for row = 1: block_row_size :size(cell_HOG,1)
-        for column = 1: block_column_size :size(cell_HOG,2)
+    for row = 1 :size(cell_HOG,1)-1
+        for column = 1 :size(cell_HOG,2)-1
             block_HOG = cell_HOG(row:row+block_row_size-1, column:column+block_column_size-1, :); 
             normalized_block_HOG_vector = normalize_block_HOG(block_HOG);
             HOG_vector(index:index+size(normalized_block_HOG_vector,2)-1) = normalized_block_HOG_vector(:);
@@ -63,16 +151,18 @@ function [normalized_block_HOG_vector] = normalize_block_HOG(block_HOG)
         end
     end
     L2_norm = sqrt(sum(normalized_block_HOG_vector.^2,'all'));
-    normalized_block_HOG_vector = normalized_block_HOG_vector ./L2_norm;
+    if(L2_norm ~= 0)
+        normalized_block_HOG_vector = normalized_block_HOG_vector ./ L2_norm;
+    end 
 end
 % read the input image and convert it to grayscale %
 function [gScale_image] = get_grayscale_image(color_image)
     % get R,G,B component of the image %
-    R = color_image(:,:,1);
-    G = color_image(:,:,2);
-    B = color_image(:,:,3);
+    R = double(color_image(:,:,1));
+    G = double(color_image(:,:,2));
+    B = double(color_image(:,:,3));
     % conversion and rounding off to produce grayscle image %
-    gScale_image = double(round((0.299 .* R + 0.587 .* G + 0.114 .* B))); 
+    gScale_image = double(0.299 .* R + 0.587 .* G + 0.114 .* B); 
 end
 
 function [HOG] = get_cell_HOG(Gm, Ga)
@@ -98,8 +188,16 @@ function [localHistogram] = calc_local_HOG(mangitude_cell, gradient_cell, bin_ce
             magnitude = mangitude_cell(row, column);
             bin_1 = mod(floor(gradient / dist_bet_centers),size(bin_centers,2))+1;
             bin_2 = mod(ceil(gradient / dist_bet_centers),size(bin_centers,2))+1;
-            localHistogram(bin_1) = localHistogram(bin_1) + abs(bin_centers(bin_2) - gradient)/dist_bet_centers * magnitude;
-            localHistogram(bin_2) =  localHistogram(bin_2) + abs(bin_centers(bin_1) - gradient)/dist_bet_centers * magnitude;
+            bin2_dist = abs(bin_centers(bin_2) - gradient);
+            bin1_dist = abs(bin_centers(bin_1) - gradient);
+            if(bin2_dist > dist_bet_centers) 
+                bin2_dist = 180 - bin2_dist;
+            end
+            if(bin1_dist > dist_bet_centers) 
+                bin1_dist = 180 - bin1_dist;
+            end
+            localHistogram(bin_1) = localHistogram(bin_1) + bin2_dist/dist_bet_centers * magnitude;
+            localHistogram(bin_2) =  localHistogram(bin_2) + bin1_dist/dist_bet_centers * magnitude;
         end
     end
 end
@@ -133,7 +231,7 @@ function [Gm, Ga] = apply_prewitt_operator(image)
         end
     end
     fig6 = figure('Name', 'horizontal-gradient image','NumberTitle', 'off');
-    imshow(uint8(normalized_Gx)); 
+   % imshow(uint8(normalized_Gx)); 
 %     saveas(fig6, 'horizontal_gradient.bmp');
     
     % calculate vertical gradient %
@@ -151,7 +249,7 @@ function [Gm, Ga] = apply_prewitt_operator(image)
         end
     end
     fig7 = figure('Name','vertical-gradient image', 'NumberTitle', 'off');
-    imshow(uint8(normalized_Gy)); 
+   % imshow(uint8(normalized_Gy)); 
 %     saveas(fig7, 'vertical_gradient.bmp');
 
     % calculate gradient maginutde image %
@@ -168,7 +266,7 @@ function [Gm, Ga] = apply_prewitt_operator(image)
     saveas(fig8,'gradient_magnitude.bmp');
     % calculate gradient angles %
     Ga = atan2d(Gy,Gx);
-    Ga(Ga > 170) = Ga(Ga >170) - 180;
+    Ga(Ga >= 170) = Ga(Ga >= 170) - 180;
     Ga(Ga < -10) = Ga(Ga < -10) + 180;
 end
 
