@@ -7,14 +7,14 @@ BASE_FOLDER = 'Human';
 
 [positive_training_data] = collect_data([BASE_FOLDER filesep TRAIN_POSITIVE_FOLDER],1);
 [negative_training_data] = collect_data([BASE_FOLDER filesep TRAIN_NEGATIVE_FOLDER],0);
-training_data = [positive_training_data negative_training_data];
+training_data = [positive_training_data, negative_training_data];
 [training_data, feature_vector_length] = extract_features(training_data);
-[network] = construct_mlp(feature_vector_length, 1000);
+[network] = construct_mlp(feature_vector_length, 100);
 [network] = train_mlp(network, training_data);
 
 [positive_testing_data] = collect_data([BASE_FOLDER filesep TEST_POSITIVE_FOLDER],1);
 [negative_testing_data] = collect_data([BASE_FOLDER filesep TEST_NEGATIVE_FOLDER],0);
-testing_data = [positive_testing_data negative_testing_data];
+testing_data = [positive_testing_data, negative_testing_data];
 [testing_data, feature_vector_length] = extract_features(testing_data);
 prdict_mlp(network, testing_data);
 
@@ -28,6 +28,7 @@ function prdict_mlp(network, testing_data)
         a1 = arrayfun(@(x) ReLU(x), y1);
         y2 = a1 * output_layer.w + output_layer.b;
         a2 = arrayfun(@(x) sigmoid(x), y2);
+        disp(testing_sample.file_name);
         disp(['should be ',num2str(testing_sample.label)]);
         disp(['prediction',num2str(a2)]);
     end
@@ -37,43 +38,48 @@ function [network] = construct_mlp(feature_vector_length, hidden_layer_size)
    network = struct;
    
    hidden_layer = struct;
-   hidden_layer.w = rand(feature_vector_length,hidden_layer_size) .* 0.01;
-   hidden_layer.b = rand(1, hidden_layer_size).* 0.01;
+   hidden_layer.w = rand(feature_vector_length,hidden_layer_size) .* 0.001;
+   hidden_layer.b = rand(1, hidden_layer_size).* 0.001;
    network.hidden_layer = hidden_layer;
    
    output_layer = struct;
-   output_layer.w = rand(hidden_layer_size,1).* 0.01;
-   output_layer.b = rand(1, 1).* 0.01;
+   output_layer.w = rand(hidden_layer_size,1).* 0.001;
+   output_layer.b = rand(1, 1).* 0.001;
    network.output_layer = output_layer;
 end
 
 function [network] = train_mlp(network, training_data)
-   hidden_layer = network.hidden_layer;
-   output_layer = network.output_layer;
-%    epoch_order = randperm(20);
-   for epochs = 1:200
-       errors = zeros(1,length(training_data));
-       for iteration = 1: length(training_data)
-        training_sample = training_data(iteration);
-        feature_vector = training_sample.feature_vector;
-        y1 = feature_vector * hidden_layer.w + hidden_layer.b;
-        a1 = arrayfun(@(x) ReLU(x), y1);
-        y2 = a1 * output_layer.w + output_layer.b;
-        a2 = arrayfun(@(x) sigmoid(x), y2);
-
-        errors(1, iteration) = (training_sample.label - a2)^2;
-        gradient =  2 * (a2 - training_sample.label);
-        gradient = arrayfun(@(x) delta_sigmoid(x), a2) .* gradient; 
-        graidents_prev_layer = output_layer.w .* gradient;
-        output_layer.w = output_layer.w - 0.01 .* a1' .*gradient;
-        output_layer.b = output_layer.b - 0.01 .* gradient;
-        graidents_prev_layer = arrayfun(@(x) delta_ReLU(x), y1').* graidents_prev_layer;
-        hidden_layer.w = hidden_layer.w - 0.01 .* feature_vector' .* graidents_prev_layer';
-        hidden_layer.b = hidden_layer.b - 0.01 .* graidents_prev_layer';  
-       end
-       disp(epochs)
-       mean_error = sum(errors, 'all')/length(errors)
-   end
+  hidden_layer = network.hidden_layer;
+  output_layer = network.output_layer;
+  for epoch = 1:200
+      for index = 1:length(training_data)
+          training_sample = training_data(index);
+          feature_vector = training_sample.feature_vector;
+          label = training_sample.label;
+          y1 = feature_vector * hidden_layer.w + hidden_layer.b;
+          a1 = arrayfun(@(x) ReLU(x), y1);
+          y2 = a1 * output_layer.w + output_layer.b;
+          a2 = arrayfun(@(x) sigmoid(x), y2);
+          error = 0.5*(label - a2)^2;
+         % disp([num2str(label) num2str(error)]);
+          
+          error_graident = - (label - a2);
+          sigmoid_gradient = arrayfun(@(x) delta_sigmoid(x), a2);
+          delta_w_output_layer = (error_graident * sigmoid_gradient) .* transpose(a1);
+          delta_hidden_layer = error_graident * sigmoid_gradient * transpose(output_layer.w);
+          ReLU_gradient = arrayfun(@(x) delta_ReLU(x), a1) .* delta_hidden_layer;
+          delta_w_hidden_layer = transpose(feature_vector) * ReLU_gradient;
+          
+          output_layer.w = output_layer.w - 0.01 * delta_w_output_layer;
+          output_layer.b = output_layer.b - 0.01 * error_graident * sigmoid_gradient;
+          
+          hidden_layer.w = hidden_layer.w - 0.01 *delta_w_hidden_layer;
+          hidden_layer.b = hidden_layer.b - 0.01 *ReLU_gradient;
+      end
+      disp(epoch)
+  end
+  network.hidden_layer = hidden_layer;
+  network.output_layer = output_layer;
 end
 
 function [a] = ReLU(x)
@@ -121,7 +127,7 @@ function [data] = collect_data(folder, label)
         image = imread(fullfile(file.folder, file.name));
         data(file_count).image = get_grayscale_image(image);
         data(file_count).label = label;  
-        data(file_count).fileName = file.name;
+        data(file_count).file_name = file.name;
     end
 end
 
@@ -196,6 +202,9 @@ function [localHistogram] = calc_local_HOG(mangitude_cell, gradient_cell, bin_ce
             if(bin1_dist > dist_bet_centers) 
                 bin1_dist = 180 - bin1_dist;
             end
+            if(bin2_dist < 0 || bin2_dist > 20 || bin1_dist <0 || bin1_dist>20)
+                disp('wrong')
+            end
             localHistogram(bin_1) = localHistogram(bin_1) + bin2_dist/dist_bet_centers * magnitude;
             localHistogram(bin_2) =  localHistogram(bin_2) + bin1_dist/dist_bet_centers * magnitude;
         end
@@ -230,7 +239,7 @@ function [Gm, Ga] = apply_prewitt_operator(image)
             normalized_Gx(row, column) = pixel_value / 3;
         end
     end
-    fig6 = figure('Name', 'horizontal-gradient image','NumberTitle', 'off');
+  %  fig6 = figure('Name', 'horizontal-gradient image','NumberTitle', 'off');
    % imshow(uint8(normalized_Gx)); 
 %     saveas(fig6, 'horizontal_gradient.bmp');
     
@@ -248,7 +257,7 @@ function [Gm, Ga] = apply_prewitt_operator(image)
             normalized_Gy(row, column) = pixel_value / 3;
         end
     end
-    fig7 = figure('Name','vertical-gradient image', 'NumberTitle', 'off');
+%     fig7 = figure('Name','vertical-gradient image', 'NumberTitle', 'off');
    % imshow(uint8(normalized_Gy)); 
 %     saveas(fig7, 'vertical_gradient.bmp');
 
@@ -262,8 +271,8 @@ function [Gm, Ga] = apply_prewitt_operator(image)
     
     % normalize and show gradient magnitude image %
     normalized_Gm = Gm./(sqrt(2)*3);
-    fig8 = figure('Name','normalized gradient magnitude image', 'NumberTitle', 'off'); imshow(uint8(normalized_Gm)); 
-    saveas(fig8,'gradient_magnitude.bmp');
+%     fig8 = figure('Name','normalized gradient magnitude image', 'NumberTitle', 'off'); imshow(uint8(normalized_Gm)); 
+%    saveas(fig8,'gradient_magnitude.bmp');
     % calculate gradient angles %
     Ga = atan2d(Gy,Gx);
     Ga(Ga >= 170) = Ga(Ga >= 170) - 180;
