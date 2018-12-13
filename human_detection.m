@@ -1,39 +1,40 @@
-close all;
+% author: Umesh Kulkarni
+% netId: umk214
+% declaring required constants %
+% storing names of folders in constatnts%
 TRAIN_POSITIVE_FOLDER = 'Train_Positive';
 TRAIN_NEGATIVE_FOLDER = 'Train_Negative';
 TEST_POSITIVE_FOLDER = 'Test_Positive';
 TEST_NEGATIVE_FOLDER = 'Test_Neg';
 BASE_FOLDER = 'Human';
+global is_testing;
 
+% collecting training data %
 [positive_training_data] = collect_data([BASE_FOLDER filesep TRAIN_POSITIVE_FOLDER],1);
 [negative_training_data] = collect_data([BASE_FOLDER filesep TRAIN_NEGATIVE_FOLDER],0);
+is_testing = false;
 training_data = [positive_training_data, negative_training_data];
+% extract HOG features %
 [training_data, feature_vector_length] = extract_features(training_data);
-[network] = construct_mlp(feature_vector_length, 100);
+% create a mlp network %
+[network] = construct_mlp(feature_vector_length, 500);
+% train the mlp network %
 [network] = train_mlp(network, training_data);
-
+% collecting testing data %
 [positive_testing_data] = collect_data([BASE_FOLDER filesep TEST_POSITIVE_FOLDER],1);
 [negative_testing_data] = collect_data([BASE_FOLDER filesep TEST_NEGATIVE_FOLDER],0);
 testing_data = [positive_testing_data, negative_testing_data];
+% extract HOG features from testing data %
+is_testing = true;
 [testing_data, feature_vector_length] = extract_features(testing_data);
+% apply traing data to the network to get predictions %
 prdict_mlp(network, testing_data);
 
-function prdict_mlp(network, testing_data)
-    hidden_layer = network.hidden_layer;
-    output_layer = network.output_layer;
-    for iteration = 1: length(testing_data)
-        testing_sample = testing_data(iteration);
-        feature_vector = testing_sample.feature_vector;
-        y1 = feature_vector * hidden_layer.w + hidden_layer.b;
-        a1 = arrayfun(@(x) ReLU(x), y1);
-        y2 = a1 * output_layer.w + output_layer.b;
-        a2 = arrayfun(@(x) sigmoid(x), y2);
-        disp(testing_sample.file_name);
-        disp(['should be ',num2str(testing_sample.label)]);
-        disp(['prediction',num2str(a2)]);
-    end
-end
 
+% neural network section of the code %
+
+% function to construct a mlp network based on size of feature vectors and
+% size of hidden layer %
 function [network] = construct_mlp(feature_vector_length, hidden_layer_size)
    network = struct;
    
@@ -48,11 +49,16 @@ function [network] = construct_mlp(feature_vector_length, hidden_layer_size)
    network.output_layer = output_layer;
 end
 
+% function to train mlp network using back propoagation rule %
 function [network] = train_mlp(network, training_data)
   hidden_layer = network.hidden_layer;
   output_layer = network.output_layer;
-  for epoch = 1:200
+  mean_error_over_epochs = zeros(1,100);
+  epoch = 0;
+  while true
+      errors = zeros(1, length(training_data));
       for index = 1:length(training_data)
+          % forward pass %
           training_sample = training_data(index);
           feature_vector = training_sample.feature_vector;
           label = training_sample.label;
@@ -61,8 +67,8 @@ function [network] = train_mlp(network, training_data)
           y2 = a1 * output_layer.w + output_layer.b;
           a2 = arrayfun(@(x) sigmoid(x), y2);
           error = 0.5*(label - a2)^2;
-         % disp([num2str(label) num2str(error)]);
-          
+          errors(index) = error;
+          % error back propagation %
           error_graident = - (label - a2);
           sigmoid_gradient = arrayfun(@(x) delta_sigmoid(x), a2);
           delta_w_output_layer = (error_graident * sigmoid_gradient) .* transpose(a1);
@@ -70,18 +76,48 @@ function [network] = train_mlp(network, training_data)
           ReLU_gradient = arrayfun(@(x) delta_ReLU(x), a1) .* delta_hidden_layer;
           delta_w_hidden_layer = transpose(feature_vector) * ReLU_gradient;
           
+          % weight and bias updation %
           output_layer.w = output_layer.w - 0.01 * delta_w_output_layer;
           output_layer.b = output_layer.b - 0.01 * error_graident * sigmoid_gradient;
           
           hidden_layer.w = hidden_layer.w - 0.01 *delta_w_hidden_layer;
           hidden_layer.b = hidden_layer.b - 0.01 *ReLU_gradient;
       end
-      disp(epoch)
+      mean_error = round(sum(errors, 'all')/length(errors),4);
+      mean_error_over_epochs(mod(epoch,length(mean_error_over_epochs))+1) = mean_error;
+      epoch = epoch + 1;
+      if all(mean_error_over_epochs == mean_error_over_epochs(1))
+          break;
+      end
   end
   network.hidden_layer = hidden_layer;
   network.output_layer = output_layer;
 end
 
+% function to use a trained mlp for predictions %
+function prdict_mlp(network, testing_data)
+    hidden_layer = network.hidden_layer;
+    output_layer = network.output_layer;
+   
+    for iteration = 1: length(testing_data)
+        testing_sample = testing_data(iteration);
+        feature_vector = testing_sample.feature_vector;
+        y1 = feature_vector * hidden_layer.w + hidden_layer.b;
+        a1 = arrayfun(@(x) ReLU(x), y1);
+        y2 = a1 * output_layer.w + output_layer.b;
+        a2 = arrayfun(@(x) sigmoid(x), y2);
+        classification = 0;
+        if(a2 > 0.5)
+            classification = 1;
+        end
+        disp(['file name: ' testing_sample.file_name]);
+        disp(['actual classification:  ' num2str(testing_sample.label)]);
+        disp(['prediction:  ' num2str(classification) ' with probability ' num2str(a2)]);
+        disp('------------------------------------------------------------------------')
+    end
+end
+
+% function to apply ReLU activation function to provided input %
 function [a] = ReLU(x)
     if (x<=0)
         a = 0;
@@ -90,6 +126,7 @@ function [a] = ReLU(x)
     end
 end
 
+% function to apply derivative of ReLU function to provided input %
 function [delta] = delta_ReLU(x)
     if (x<=0)
         delta = 0;
@@ -98,27 +135,49 @@ function [delta] = delta_ReLU(x)
     end
 end
 
+% function to apply Sigmoid activation function to provided input %
 function [a] = sigmoid(x)
     a = 1/(1 + exp(-x));
 end
 
+% function to apply derivative of Sigmoid function to provided input %
 function [delta] = delta_sigmoid(x)
     delta = x * (1-x);
 end
 
+% feature extraction portion of the code %
+% function to iterate over provided images and collect HOG features %
 function [data, feature_vector_length] = extract_features(data)
     for image_count = 1:length(data)
-        data(image_count).feature_vector = extract_HOG_features(data(image_count).image);
+        feature_vector = extract_HOG_features(data(image_count).image,data(image_count).file_name);
+        data(image_count).feature_vector = feature_vector;
+            file = fopen(strcat(data(image_count).file_name,'.txt'),'w');
+            fprintf(file,'%12.8f\n',feature_vector);
+            fclose(file);
     end
     feature_vector_length = length(data(1).feature_vector);
 end
 
-function [HOG_vector] = extract_HOG_features(image)
+% function to extract HOG features from a given image %
+function [HOG_vector] = extract_HOG_features(image, file_name)
+    % get gradient magnitude and gradient angles by applying prewitt's operator %
     [Gm, Ga] = apply_prewitt_operator(image);
+    % normalize and store gradient magnitude as image%
+    normalize_and_store(Gm, file_name);
+    % divide images into cells and caluclate cell HOG %
     [cell_HOG] = get_cell_HOG(Gm, Ga);
-    [HOG_vector] = concat_cell_HOGs(cell_HOG);
+    % concatenate cell HOGs per block and vectorize to get final feature vector %
+    [HOG_vector] = concat_cell_HOGs(cell_HOG); 
 end
-% function collects data from a folder named Human at the rot of the project %
+
+% function to normalize and store gradient magnitude %
+function normalize_and_store(Gm, file_name)
+    normalized_Gm = Gm./(sqrt(2)*3);
+    fig = figure('Name','normalized gradient magnitude image', 'NumberTitle', 'off'); imshow(uint8(normalized_Gm)); 
+    saveas(fig,strcat('gradient_magnitude',file_name,'.bmp'));
+end
+
+% function collects data from a given folder %
 function [data] = collect_data(folder, label)
     files = dir(fullfile(folder,'*.bmp'));
     data = struct([]);
@@ -131,7 +190,7 @@ function [data] = collect_data(folder, label)
     end
 end
 
-% cuntion to concat cell-HOG into block HOG %
+% fcuntion to concat cell-HOG into block HOG %
 function [HOG_vector] = concat_cell_HOGs(cell_HOG)
     block_row_size = 2;
     block_column_size = 2;
@@ -161,6 +220,7 @@ function [normalized_block_HOG_vector] = normalize_block_HOG(block_HOG)
         normalized_block_HOG_vector = normalized_block_HOG_vector ./ L2_norm;
     end 
 end
+
 % read the input image and convert it to grayscale %
 function [gScale_image] = get_grayscale_image(color_image)
     % get R,G,B component of the image %
@@ -185,6 +245,7 @@ function [HOG] = get_cell_HOG(Gm, Ga)
     end
 end
 
+%  function to calulate histogram of a provided cell%
 function [localHistogram] = calc_local_HOG(mangitude_cell, gradient_cell, bin_centers)
     dist_bet_centers = 20;
     localHistogram = zeros(size(bin_centers));
@@ -196,14 +257,12 @@ function [localHistogram] = calc_local_HOG(mangitude_cell, gradient_cell, bin_ce
             bin_2 = mod(ceil(gradient / dist_bet_centers),size(bin_centers,2))+1;
             bin2_dist = abs(bin_centers(bin_2) - gradient);
             bin1_dist = abs(bin_centers(bin_1) - gradient);
+            % to make sure distances remain less than distance betwenn two centers%
             if(bin2_dist > dist_bet_centers) 
                 bin2_dist = 180 - bin2_dist;
             end
             if(bin1_dist > dist_bet_centers) 
                 bin1_dist = 180 - bin1_dist;
-            end
-            if(bin2_dist < 0 || bin2_dist > 20 || bin1_dist <0 || bin1_dist>20)
-                disp('wrong')
             end
             localHistogram(bin_1) = localHistogram(bin_1) + bin2_dist/dist_bet_centers * magnitude;
             localHistogram(bin_2) =  localHistogram(bin_2) + bin1_dist/dist_bet_centers * magnitude;
@@ -214,6 +273,7 @@ end
 % function to apply prewitt_operator to provided image and 
 % return gradient magnitude and gradient angle matrices %
 function [Gm, Ga] = apply_prewitt_operator(image)
+    global is_testing
     prewitt_operator_Gx = ([
         -1,  0,  1;
         -1,  0,  1;
@@ -239,9 +299,6 @@ function [Gm, Ga] = apply_prewitt_operator(image)
             normalized_Gx(row, column) = pixel_value / 3;
         end
     end
-  %  fig6 = figure('Name', 'horizontal-gradient image','NumberTitle', 'off');
-   % imshow(uint8(normalized_Gx)); 
-%     saveas(fig6, 'horizontal_gradient.bmp');
     
     % calculate vertical gradient %
     Gy = convolution(image, prewitt_operator_Gy);
@@ -257,9 +314,6 @@ function [Gm, Ga] = apply_prewitt_operator(image)
             normalized_Gy(row, column) = pixel_value / 3;
         end
     end
-%     fig7 = figure('Name','vertical-gradient image', 'NumberTitle', 'off');
-   % imshow(uint8(normalized_Gy)); 
-%     saveas(fig7, 'vertical_gradient.bmp');
 
     % calculate gradient maginutde image %
     Gm = zeros(size(Gx));
@@ -269,10 +323,6 @@ function [Gm, Ga] = apply_prewitt_operator(image)
         end
     end
     
-    % normalize and show gradient magnitude image %
-    normalized_Gm = Gm./(sqrt(2)*3);
-%     fig8 = figure('Name','normalized gradient magnitude image', 'NumberTitle', 'off'); imshow(uint8(normalized_Gm)); 
-%    saveas(fig8,'gradient_magnitude.bmp');
     % calculate gradient angles %
     Ga = atan2d(Gy,Gx);
     Ga(Ga >= 170) = Ga(Ga >= 170) - 180;
